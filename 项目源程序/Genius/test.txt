@@ -1,0 +1,54 @@
+
+当前叶子为int|0, 当前父亲为function-definition|38
+int保留模式, 将作为孩子插入到function-definition结点
+
+
+当前叶子为identifier|2, 当前父亲为function-definition|38
+identifier保留模式, 将作为孩子插入到function-definition结点
+
+
+当前叶子为(|3, 当前父亲为function-definition|38
+
+
+当前叶子为void|4, 当前父亲为parameters|5
+void保留模式, 将作为孩子插入到parameters结点
+
+
+当前叶子为)|6, 当前父亲为function-definition|38
+
+
+当前叶子为{|7, 当前父亲为compound-stmt|37
+
+
+当前叶子为local-definitions|8, 当前父亲为compound-stmt|37
+
+
+当前叶子为statement-list|9, 当前父亲为compound-stmt|37
+
+
+当前叶子为identifier|10, 当前父亲为expression|19
+identifier保留模式, 将作为孩子插入到expression结点
+
+
+当前叶子为=|12, 当前父亲为expression|19
+=是运算符, 不生成结点但会替代父结点名字expression
+
+
+当前叶子为number|13, 当前父亲为expression|18
+number保留模式, 将作为孩子插入到expression结点
+
+
+当前叶子为;|20, 当前父亲为expression-stmt|21
+
+
+当前叶子为return|24, 当前父亲为return-stmt|33
+
+
+当前叶子为identifier|25, 当前父亲为expression|31
+identifier保留模式, 将作为孩子插入到expression结点
+
+
+当前叶子为;|32, 当前父亲为return-stmt|33
+
+
+当前叶子为}|36, 当前父亲为compound-stmt|37

@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>GeniusClass</class>
+ <widget class="QMainWindow" name="GeniusClass">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>520</width>
+    <height>460</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Genius</string>
+  </property>
+  <widget class="QWidget" name="centralWidget">
+   <widget class="QLabel" name="label">
+    <property name="geometry">
+     <rect>
+      <x>140</x>
+      <y>0</y>
+      <width>291</width>
+      <height>121</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Brush Script MT</family>
+      <pointsize>24</pointsize>
+      <weight>75</weight>
+      <bold>true</bold>
+     </font>
+    </property>
+    <property name="text">
+     <string>Grammar Genius
+ 文 法  天 才</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="task1pushButton">
+    <property name="geometry">
+     <rect>
+      <x>180</x>
+      <y>130</y>
+      <width>151</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <pointsize>13</pointsize>
+      <weight>50</weight>
+      <bold>false</bold>
+     </font>
+    </property>
+    <property name="text">
+     <string>词法分析</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="task2pushButton">
+    <property name="geometry">
+     <rect>
+      <x>180</x>
+      <y>190</y>
+      <width>151</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <pointsize>13</pointsize>
+     </font>
+    </property>
+    <property name="text">
+     <string>文法分析</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="wizardpushButton">
+    <property name="geometry">
+     <rect>
+      <x>180</x>
+      <y>250</y>
+      <width>151</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <pointsize>13</pointsize>
+     </font>
+    </property>
+    <property name="text">
+     <string>使用说明</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="quitpushButton">
+    <property name="geometry">
+     <rect>
+      <x>180</x>
+      <y>310</y>
+      <width>151</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <pointsize>13</pointsize>
+     </font>
+    </property>
+    <property name="text">
+     <string>退出</string>
+    </property>
+   </widget>
+   <widget class="QFrame" name="frame">
+    <property name="geometry">
+     <rect>
+      <x>0</x>
+      <y>-10</y>
+      <width>521</width>
+      <height>431</height>
+     </rect>
+    </property>
+    <property name="frameShape">
+     <enum>QFrame::StyledPanel</enum>
+    </property>
+    <property name="frameShadow">
+     <enum>QFrame::Raised</enum>
+    </property>
+   </widget>
+   <zorder>frame</zorder>
+   <zorder>label</zorder>
+   <zorder>task1pushButton</zorder>
+   <zorder>task2pushButton</zorder>
+   <zorder>wizardpushButton</zorder>
+   <zorder>quitpushButton</zorder>
+  </widget>
+  <widget class="QMenuBar" name="menuBar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>520</width>
+     <height>25</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QToolBar" name="mainToolBar">
+   <attribute name="toolBarArea">
+    <enum>TopToolBarArea</enum>
+   </attribute>
+   <attribute name="toolBarBreak">
+    <bool>false</bool>
+   </attribute>
+  </widget>
+  <widget class="QStatusBar" name="statusBar"/>
+ </widget>
+ <layoutdefault spacing="6" margin="11"/>
+ <resources>
+  <include location="Genius.qrc"/>
+ </resources>
+ <connections>
+  <connection>
+   <sender>task1pushButton</sender>
+   <signal>clicked()</signal>
+   <receiver>GeniusClass</receiver>
+   <slot>showtask1()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>247</x>
+     <y>185</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>519</x>
+     <y>193</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>task2pushButton</sender>
+   <signal>clicked()</signal>
+   <receiver>GeniusClass</receiver>
+   <slot>showtask2()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>282</x>
+     <y>258</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>519</x>
+     <y>251</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>wizardpushButton</sender>
+   <signal>clicked()</signal>
+   <receiver>GeniusClass</receiver>
+   <slot>showWizard()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>266</x>
+     <y>307</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>519</x>
+     <y>309</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>quitpushButton</sender>
+   <signal>clicked()</signal>
+   <receiver>GeniusClass</receiver>
+   <slot>close()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>286</x>
+     <y>378</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>519</x>
+     <y>378</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
+ <slots>
+  <slot>showtask1()</slot>
+  <slot>showtask2()</slot>
+  <slot>showWizard()</slot>
+ </slots>
+</ui>

@@ -1,0 +1,3 @@
+C:\Users\Administrator\Desktop\编译原理返工\test\mingw-w64-gcc-10.2-stable-r33\bin\gcc.exe 
+C:\Users\Administrator\Desktop\编译原理返工\test\mingw-w64-gcc-10.2-stable-r33\bin\i686-w64-mingw32-gcc.exe 
+C:\Users\Administrator\Desktop\编译原理返工\test\mingw-w64-gcc-10.2-stable-r33\bin\x86_64-w64-mingw32-gcc.exe 

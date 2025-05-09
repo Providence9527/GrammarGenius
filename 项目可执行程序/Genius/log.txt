@@ -1,0 +1,3 @@
+C:\Users\Administrator\Desktop\编译原理返工\编译原理项目第二次提交\项目可执行程序\Genius\mingw-w64-gcc-10.2\bin\g++.exe 
+C:\Users\Administrator\Desktop\编译原理返工\编译原理项目第二次提交\项目可执行程序\Genius\mingw-w64-gcc-10.2\bin\i686-w64-mingw32-g++.exe 
+C:\Users\Administrator\Desktop\编译原理返工\编译原理项目第二次提交\项目可执行程序\Genius\mingw-w64-gcc-10.2\bin\x86_64-w64-mingw32-g++.exe 

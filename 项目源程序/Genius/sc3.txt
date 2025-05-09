@@ -1,0 +1,2583 @@
+// 改进语法规则输入版
+#include "SLR1.h"
+/**
+*****************************************************************************
+*  Copyright (c) 2024 Liang Haifeng. All rights reserved
+*
+*  @file    CodeGenerator.cpp
+*  @brief   本文件文法分析核心代码文件, 包括词法分析各功能模块的具体实现
+*           1. 文法规则读入
+*           2. 求文法规则的first集合与follow集合
+*           3. 生成文法规则的Lr(0)DFA图(以邻接矩阵的格式)
+*           4. 生成文法规则的SLR1分析表
+*           5. 读取lex或源码进行文法分析
+*           6. 生成抽象语法树(AST)
+*           7. 可视化界面逻辑设置
+* 
+*  @author  梁海峰
+*  @date    2024-05-05
+*  @version V1.0 20240529
+*
+
+*
+*----------------------------------------------------------------------------
+*  @note 历史版本  修改人员    修改日期    修改内容
+*  @note v1.0      梁海峰      2024-5-5    完成编写
+*  @note v2.0      梁海峰      2024-5-29   完善代码, 使其适配minic
+*****************************************************************************
+*/
+
+
+///以下是例子，供参考///
+
+/**
+*****************************************************************************
+*  Copyright (C), 2010-2019, GOSUN CL
+*
+*  @file    CLUtility.h
+*  @brief   各种通用小功能/通用文件操作
+*           1. 小功能：新增 正则匹配/查找下一个字符/文件夹（全部）创建
+*           2. 重新封装: CECDateTime/CECString/CECFile/CECLogFile/
+*           3. 新增功能模块：CECRunLog(运行日志)/CECReadIni(ini文件读取)
+*
+*  @author  gu
+*  @date    2019-07-18
+*  @version V1.1.0 20190718
+*----------------------------------------------------------------------------
+*  @note 历史版本  修改人员    修改日期    修改内容
+*  @note v1.0      gu          2018-2-15   1.创建
+*
+*****************************************************************************
+*/
+
+SLR1::SLR1(QWidget* parent)
+    : QMainWindow(parent)
+{
+    ui.setupUi(this);
+}
+
+// 函数名称: 文法规则处理函数
+// 函数功能: 处理读自文本框中的一行文法规则, 提取出其中的终结符与非终结符, 并进行单词 - 字母映射
+// 函数参数: 文本框中的一行文法规则
+// 函数返回值: 无
+void SLR1::processSentence(string s)
+{
+    //action;//    set<char> action;//所有字符
+    //sentence;//map<char, queue<string>> sentence
+
+
+    string loc = ">@<@>=@<=@!=@<>@+=@-=@*=@/=@++@--@&&@||@:=@==@"; //多字符运算符的序列
+    char left = ' '; // 产生式左部
+    string right = "";// 产生式右部
+    string tempRight = "";
+    int id = 0; // 遍历产生式字符串的下标
+    s += ' '; // 末尾添加一个空格作访问 id+1 位的保护
+    int border = s.find("->"); // ->位置
+
+
+    // 处理左部
+    string lefts = s.substr(0, border);
+    lefts.erase((remove(lefts.begin(), lefts.end(), ' '), lefts.end()));
+    left = word2letter(lefts);
+    if (fielement.find(left) == string::npos)
+        fielement += left;
+
+    // 处理右部
+    s = s.substr(border + 2, s.size());
+    while (id < s.size())
+    {
+        if (s[id] == ' ')// 处理空格: 跳过空格
+            id += 1;
+        else if (isalpha(s[id]))  //  默认产生式单词由字母, 数字, 下划线'_'与tiny特有的连字符'-'组成, 且由字母开头
+        {
+            string word = "";
+            while (isalnum(s[id]) != 0 || s[id] == '_' || (s[id] == '-'))
+            {
+                word += s[id];
+                id += 1;
+            }
+            if (word != "")
+            {
+                right += word2letter(word);
+            }
+            //id -= 1;// 将下标复位一下, 以免漏掉当前字符
+
+        }
+        else if (s[id] == '|') // 处理文法层面运算符 或
+        {
+
+            //sentence[left].push(right);
+            senstr += left + right + "#";
+            //tempRight += right + "|";
+            right = "";
+            id += 1;
+        }
+        else if (loc.find(string{ s[id],s[id + 1] }) != string::npos) // 处理形如">="等多字符运算符
+        {
+            string t = string{ s[id], s[id + 1] };
+            right += word2letter(t);
+            id += 2;
+        }
+        else
+        {
+            string t = string{ s[id] };
+            right += word2letter(t);
+            id += 1;
+        }
+    }
+    senstr += left + right + "#";
+    //sentence[left].push(right);
+    //tempRight += right;
+    ////cout << left << " -> " << tempRight << endl;
+}
+
+
+// 函数名称: 映射修正函数
+// 函数功能: 在映射字母充足的情况下, 将误映射到小写字母的非终结符重新映射回大写字母
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::correct()
+{
+    map<char, char> newmap; // 原映射字母 - 现在字母 一对一映射
+    queue<char> newbig; // 可供非终结字符使用的新增字符队列
+    if (alnum.front() >= 97) // 如果备用映射字符队列小写字母没用完(队首元素为小写字母)
+    {
+        for (int i = 0; i < 26; i++) // 就把所有大写字母加入新增字符队列
+            newbig.push(char(int('A') + i));
+    }
+    else // 否则将原备用字符映射队列赋值
+    {
+        newbig = alnum;
+    }
+    char big = ' '; // 当前单词对应的新的映射的大写字母
+    for (auto N : fielement) // 遍历所有左部符号
+    {
+
+        if (int(N) >= 97) // 找出误映射到小写字母上的非终结符
+        {
+            ////cout << w2l[N] << "对应的字母" << N << "是小写字母, 需要替换" << endl;
+            char t = char(int(N) - 32); // 替换之后的新大写字母
+            string temp = w2l[N]; // 当前非终结符对应的英文单词
+            string bit = w2l[t];// 空串或将被替换的英文单词
+
+            if (bit != "")// 如果对应大写字母有映射冲突, 并确定它新映射的字符
+            {
+                
+                if (fielement.find(t) == string::npos) // 如果与终结字符冲突, 则互换, 不改变w2l大小
+                {
+                    ////cout << w2l[N] << "(" << N << ")" << "与" << "终结字符的 "<<w2l[t]<<"("<<t<<")"<<"替换" << endl<<endl;
+                    w2l[N] = bit;
+                    l2w[bit] = N;
+                }
+                else  //如果与非终结字符冲突, 弹出一个新的大写字母来赋值, 并删掉w2l中原来的映射
+                {
+                    ////cout << w2l[N] << "(" << N << ")" << "与" << "同为非终结字符的 <<" << w2l[t] << "(" << t << ")" << "冲突, 弹出一个新的大写字母"<<big<<"替换" <<endl<< endl;
+                    big = newbig.front(); newbig.pop();
+                    t = big; // 确定英文单词替换后的值
+                    w2l.erase(N); // 删掉原来的映射
+
+
+                }
+            }
+
+            w2l[t] = temp;
+            l2w[temp] = t;
+            ////cout << N << "替换为" << t << endl;
+            newmap[N] = t;
+            fielement[fielement.find(N)] = t;
+        }
+        
+    }
+    ////cout << "替换前" << endl;
+    ////cout << senstr << endl;
+    // 处理sentence变量
+    for (auto p : newmap) // 遍历替换历史, 将保存所有文法规则的语句序列对应字符进行替换
+    {
+        if ((senstr.find(p.first) != string::npos) && (senstr.find(p.second) != string::npos))
+        {// 替换双方都在文法规则中不能直接替换
+            replace(senstr.begin(), senstr.end(), p.first, '|');
+            replace(senstr.begin(), senstr.end(), p.second, p.first);
+            replace(senstr.begin(), senstr.end(), '|', p.second);
+        }
+        else
+            replace(senstr.begin(), senstr.end(), p.first, p.second);
+    }
+    ////cout << "替换后" << endl;
+    ////cout << senstr << endl;
+
+
+}
+SLR1::~SLR1()
+{
+}
+
+// 函数名称: 文法规则输入函数
+// 函数功能: 读取文本框中多行输入的, 有单词组成的文法规则
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::input()
+{
+    QTextDocument* doc = ui.inputplainTextEdit->document(); // 用来逐行遍历的文本文档对象
+    int blocks = doc->blockCount(); // 文本框中行数
+    string temp = ""; // 本行读取的文法规则
+    //cout << endl << endl << endl;
+
+
+    string AstNodes =  doc->findBlockByNumber(0).text().toStdString();// 语法树中要保留的结点
+    string Special = doc->findBlockByNumber(1).text().toStdString(); // 结点之间存在的特殊关系
+    preAst(AstNodes, Special);
+
+    for (int i = 2; i < blocks; i++)
+    {
+        QTextBlock textblock = doc->findBlockByNumber(i);
+        temp = textblock.text().toStdString();//当前读取的sentence
+        int ai = 0; // 指向文法规则第一个字母的指针, 用来过滤掉文法规则的序号
+        while (ai < temp.size() && isalpha(temp[ai]) == 0) ai++;
+        temp = temp.substr(ai, temp.size());
+        if (temp.size() == 0)
+            continue;
+        processSentence(temp); // 处理文法规则, 分解单词并进行映射
+
+    }
+    ////cout << "以下是映射之后的TINY文法规则" << endl;
+    if (fielement.size() < 26) // 如果左部非终结符的个数超出大写字母个数, 则表示映射完所有非终结符, 只有小于才去更正, 使非终结字符映射完所有大写字母
+    {
+        correct();
+    }
+    int pos = 0; // 所有文法规则语句序列中, 分割符'#'位置
+    int cur = 0; // 当前所有文法规则语句序列中最开头的位置(因为每处理完一段由#分割的就会缩小, 即开头会后移)
+    while ((pos = senstr.find('#')) != string::npos)
+    {
+        char left = senstr[cur]; // 文法规则左部
+        string right = senstr.substr(cur + 1, pos - cur - 1); // 文法规则右部
+        sentence[left].push(right);
+        cur = pos + 1;
+        senstr[pos] = ' ';
+    }
+
+
+    //cout << endl << endl << "#" << "读取的文法规则如下:" << endl;
+
+    int num = 1; // 归约式序号
+    char begin = fielement[0]; // 文法开始符号, 一般默认为第一行文法规则的左部
+    queue<string> rt = sentence[begin]; // 文法开始符号作为左部对应的若干条文法规则
+    while (!rt.empty()) // 这个循环的作用是将文法开始符号对应文法规则的归约式的序号作为归约式较前的序号, 方便检查
+    {
+        string right = rt.front(); rt.pop(); // 文法规则右部
+        string prod = str_format("%c -> %s", begin, right.c_str()); // 映射后的文法规则
+        prod2num[prod] = str_format("r%d", num); 
+        num2prod[str_format("r%d", num)] = prod;
+        num += 1;
+        string result = "";
+        for (auto a : right)
+        {
+            //result += w2l[a] + ' ';
+            result += string{a} + ' ';
+            ////cout << a << " 替换为 " << w2l[a] << endl;
+        }
+        //cout << begin << " -> " << result << endl;
+    }
+
+    for (auto c : sentence)
+    {
+        char left = c.first; // 文法规则左部
+        if (left == begin) continue; // 之前处理过就不对文法规则对应的归约式进行标号了
+        ////cout << "#" << w2l[c.first] << ":" << endl;
+        while (!c.second.empty())
+        {
+            string right = c.second.front(); // 文法规则右部
+            string prod = str_format("%c -> %s", left, right.c_str());
+            string result = "";
+            prod2num[prod] = str_format("r%d", num);
+            num2prod[str_format("r%d", num)] = prod;
+            num += 1;
+            for (auto a : right)
+            {
+                //result += w2l[a] + ' ';
+                result += string{a} + ' ';
+                ////cout << a << " 替换为 " << w2l[a] << endl;
+            }
+            c.second.pop();
+            ////cout  << "             ->" << result << endl;
+            //cout << c.first << " -> " << result << endl;
+        }
+    }
+
+    //cout << "#" << "单词 - 字母 映射如下:" << endl;
+    for (auto p : w2l)
+    {
+        //cout << "单词: " << p.second << " ---" << "字母: " << p.first << endl;;
+    }
+
+    //cout << endl << endl;
+    for (auto c : w2l) // 将涉及的所有终结字符与非终结字符插入action, 即slr1分析表的列表头
+    {
+        action.insert(c.first);
+    }
+    action.insert('$'); 
+    word2letter("$");
+    //cout << "#" << "所有action: " << endl;
+    for (auto c : action)
+    {
+        //cout << "#" << w2l[c] << "  " << endl;
+    }
+    //cout << endl;
+
+    //cout << "#" << "左部元素如下" << endl;
+    for (auto c : fielement)
+    {
+        //cout << "#" << w2l[c] << "  ";
+    }
+    //cout << endl;
+    //printf("%s\n", input.c_str());
+    ////cout <<  << endl;
+
+    //cout << "用来测试比对" << endl;
+    //for (auto c : sentence)
+    //{
+
+    //    ////cout << "#" << w2l[c.first] << ":" << endl;
+    //    while (!c.second.empty())
+    //    {
+    //        string right = c.second.front();
+    //        //cout << c.first << " -> " << right << endl;
+    //        c.second.pop();
+    //    }
+    //}
+    for (int i = 0;i<fielement.size();i++)
+    { 
+        char left = fielement[i];
+        queue<string> rights = sentence[left];
+        while (!rights.empty())
+        {
+            string right = rights.front(); rights.pop();
+            string result = "";
+            for (auto a : right)
+            {
+                result += w2l[a] + ' ';
+            }
+            //cout << w2l[left] << " -> " << result << endl;
+        }
+    }
+    //cout << "句首元素" << fielement<<endl;
+
+
+
+}
+
+// 函数名称: first集合求解函数
+// 函数功能: 求解给定非终结符的first集合
+// 函数参数: char 任意非终结符
+// 函数返回值: bool 当前字符是否能推出空(@)的标志
+bool SLR1::first(char E)
+{
+
+
+    bool flag = false;//判断当前first集合是否求到@
+    bool flag2 = false;//判断非终结字符是否会推导出@
+    string right = "";//语句右部
+    int id = 0;//句首元素id
+    char c = ' '; // 句首元素(暂时的)
+    queue<string> temp = sentence[E]; // 非终结字符对应的所有文法规则右部
+    while (!temp.empty())
+    {
+
+        right = temp.front();
+        //printf("\n当前处理字符 %c , 处理串 : %s \n", E, right.c_str());
+        temp.pop();
+        id = 0; // 开始默认句首元素为右部第一个字符
+        c = right[id]; // 句首元素
+        if (c == E) continue; // 句首元素与当前字符一致, 即出现递归, 则读取下一条规则
+        //处理终结字符
+        //if (int(c) < 65 || int(c) > 90)
+        if (isEnd(c)) // 右部句首元素c为终结字符直接放入E的first集合
+        {
+            firstSet[E].insert(c);
+            if (c == epsion)
+            {
+                ////cout << "当前左部" << E << "含epsilon" << endl;
+                flag = true;
+            }
+        }
+        //处理非终结字符
+        else
+        {
+            do // 当前句首为非终结符, 其可能会推出epsilon, 就会导致它的下一个元素的first集合也在E中, 因此需要循环往后
+            {
+                //if (int(right[id]) < 65 || int(right[id]) > 90)
+                if (isEnd(right[id]))
+                {
+                    firstSet[E].insert(right[id]);
+                    break;
+                }
+                flag2 = first(right[id]); // 递归调用, 判断当前非终结符是否会推出epsilon的标识
+                //printf("af %c\n", right[id]);
+                //printf("++++++++++\n");
+                //for (auto c : firstSet)
+                //{
+                //    //printf("%c", c.first);
+                //}
+                //printf("\n++++++++++\n");
+                //for (auto c : firstSet[right[id]])
+                //{
+                //    if (c != '@')
+                //    {
+                //        //printf("%c <--- %c\n", E, c);
+                //        firstSet[E].insert(c);
+                //    }
+                //}
+                addAll(firstSet[right[id]], firstSet[E], '@');
+                id += 1;
+            } while (flag2); 
+        }
+
+    }
+    if (flag)
+    {
+        ////cout << "flag为" << flag << ", 当前左部" << E << "含epsilon" << endl;
+        s[E].ep = true; // 记录当前非终结符推得出epsilon
+    }
+    return flag;
+}
+
+
+
+// 函数名称: follow集合求解函数
+// 函数功能: 求解文法规则序列所有非终结字符的follow集合
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::follow()
+{
+    //printf("hhhhhhhh\n");
+    //for (auto &c : s)
+    //{
+    //    if (c.second.ep)
+    //    {
+
+    //    }
+    //        //printf("%c  ", c.first);
+    //}
+    //printf("\n\n");
+    bool flag = false; // 判断迭代前后, follow集合有无变化的标志
+    followSet[fielement[0]].insert('$'); // 为文法开始符号follow集合插入 $
+    s[fielement[0]].followsize = 1; 
+    do
+    {
+        flag = false;
+        for (auto E : fielement) // 遍历所有非终结字符(左部字符)
+        {
+
+            //char temp = ' ';//后行指针
+            queue<string> seq = sentence[E]; // 非终结字符E对应的所有文法规则右部
+            while (!seq.empty())
+            {
+
+                string right = seq.front(); seq.pop(); // 文法规则右部
+                int id = right.length() - 1; // 右部当前求解follow集合字符的下标
+                while (id >= 0) // 句末元素下标前移
+                {
+                    if (isEnd(right[id]))//如果当前字符为终结字符, 不予求解follow, 指针前移
+                    {
+                        id -= 1;
+                        continue;
+                    }
+                    if (id + 1 == right.length()) // 当前字符为倒数第1字符处理, 句末字符(脚)的follow集合也即左部(人)的follow(脚底和人底是一个东西)
+                    {
+                        if (E != right[id]) // 防止递归, 当前求解
+                        {
+                            addAll(followSet[E], followSet[right[id]], ' '); //
+                        }
+                    }
+                    else if (isEnd(right[id + 1])) // 当前字符不在末尾, 且后一个字符为终结字符, 直接加入即可
+                    {
+                        followSet[right[id]].insert(right[id + 1]);
+                        ////cout << "后终, 将" << "(" << right[id + 1] << ")" << "放入" << "F(" << right[id] << ")" << endl;
+                    }
+                    else if (!isEnd(right[id + 1])) // 当前字符不在末尾, 且后一个字符为非终结字符, 则可能需要递推往右部句末方向求解follow
+                    {
+                        //printf("\n\n\n当前right: %s    当前求follow: %c \n", right.c_str(), right[id]);
+                        if ((id + 1 == right.length() - 1)) // 当前字符为倒数第二个字符
+                        {
+                            if (s[right[id + 1]].ep)// 如果当前字符后一个字符(倒数第一)能推导出epsilon, 需要将后一字符follow集合并左部开始符号follow加入(其实有点多余, 前者包含了后者)
+                            {
+                                ////cout << "后非终且含空, 将" << "F(" << E << ")" << "放入" << "F(" << right[id] << ")" << endl;
+                                //printf("将%s放入%s\n", set_str(followSet[E]).c_str(), set_str(followSet[right[id]]).c_str());
+                                addAll(followSet[E], followSet[right[id]], ' ');
+                            }
+                            ////cout << "后非终, 将" << "FIR(" << right[id + 1] << ")" << "放入" << "F(" << right[id] << ")" << endl;
+                            addAll(firstSet[right[id + 1]], followSet[right[id]], '@');
+                            //printf("将%s放入%s\n", set_str(firstSet[right[id + 1]]).c_str(), set_str(followSet[right[id]]).c_str());
+                        }
+                        //if ((id + 1 == right.length() - 1) && s[right[id + 1]].ep)
+                        //{
+                        //    addAll(followSet[E], followSet[right[id]], ' ');
+
+                        //}
+                        //addAll(firstSet[right[id + 1]], followSet[right[id]],'@');
+                        else // 当前字符非倒数第二个字符
+                        {
+                            //printf("\nfucking comng\n");
+
+                            int p = id + 1; // 当前字符后一个字符
+                            bool flags = false;
+                            do
+                            {
+                                bool flags = s[p].ep;
+                                //printf("当前p: %c\n", right[p]);
+                                ////cout << "后非终, 将" << "FIR(" << right[p] << ")" << "放入" << "F(" << right[id] << ")" << endl;
+                                addAll(firstSet[right[p]], followSet[right[id]], ' ');
+                                //printf("将%s放入%s\n", set_str(firstSet[right[p]]).c_str(), set_str(followSet[right[id]]).c_str());
+                                p += 1;
+                                if (isEnd(right[p])) break;
+
+                            } while (flags && p <= right.length() - 1); // 当后一字符不能推出epsilon或遇到终结符时才结束
+
+                        }
+
+                    }
+                    if (s[right[id]].followsize != followSet[right[id]].size()) // 判断本次迭代前后, 当前元素的follow集合有无改变, 没有改变才求下一个非终结符
+                    {
+                        s[right[id]].followsize = followSet[right[id]].size();
+                        flag = true;
+                    }
+                    id -= 1;
+                }
+            }
+
+        }
+    } while (flag);
+}
+
+
+
+
+// 函数名称: SLR1分析表生成函数
+// 函数功能: 根据文法规则序列生成SLR1分析表
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::slr1DFA()
+{
+    queue<queue<dfS>> cal; // 待计算状态队列, queue<dfS>表示一个状态, 组成成分dfS表示一个项目(产生式)
+
+    if (sentence[fielement[0]].size() >= 1) // 如果文法开始符号对应的产生式不止一条, 即文法开始有多个入口, 则进行文法扩充
+    {
+
+        sentence[Gbegin].push(fielement.substr(0, 1));
+        dfS temp = dfS(Gbegin, fielement.substr(0, 1));
+        queue<dfS> t;
+        t.push(temp);
+        queue<dfS> t2 = genState(t);
+        cal.push(t2);
+
+        dfaStat[state2str(cal.front())] = -1;
+    }
+    int statenum = 0; // 当前状态序号
+    while (!cal.empty())
+    {
+
+        queue<dfS> states = cal.front(); cal.pop(); // 弹出一个待计算状态
+        isSlr1(states, statenum);
+        //printf("\n\n\n当前状态:\n");
+        //printState(states);
+
+        //printf("----------------\n");
+        ////queue<dfS> states = genState(temp);
+        /*if (dfaStat[state2str(states)] == 0)
+            continue;
+        else
+            dfaStat[state2str(states)] = statenum++;*/
+        map<char, queue<dfS>> curs;//移进边 - 移进后新状态项目集 一对一映射, 
+        while (!states.empty()) 
+        {
+
+            dfS t = states.front(); states.pop();// 弹出当前计算状态中的一个待计算项目
+            //printf("\n\n当前扫描的语句是%s\n", dfs2str(t).c_str());
+
+            // 这个条件判断语句用于处理可以归约的项目
+            if (t.pointPos == t.right.length()) // 如果点'.'位置位于项目末尾, 说明需要进行归约
+            {
+                char c = t.right[t.pointPos - 1];
+                //printf("\n\n需要归约的规则是%s\n", dfs2str(t).c_str());
+                fillTable(t, c, statenum, statenum, 0);
+                //lr0dfa[statenum][statenum] = s.first;
+                continue;
+            }
+            else if (t.right[0] == epsion) // 如果当前规则右部为空, 则需要进行相应处理
+            {
+                //printf("\n\n需要归约的规则是%s\n", dfs2str(t).c_str());
+                fillTable(t, epsion, statenum, statenum, 0);
+                //lr0dfa[statenum][sn] = s.first;
+                continue;
+            }
+
+            // 以下4条语句用于处理移进项目
+            char bp = ' '; // 表示当前项目中 点'.' 后面的用于移进的字符
+            bp = t.right[t.pointPos];
+            t.pointPos += 1; // 当前项目作为新状态的项目被引进后, 就需要将 '.' 后移
+            curs[bp].push(t); // 一个bp就对应一个新的移进状态, 这里是将当前项目引入新的移进状态
+
+        }
+        //int ts = statenum;
+        for (auto s : curs) // 遍历移进新状态集, 为新状态标号(可能是已有编号, 或新编号), 填写lr0DFA与SLR1 
+        {
+
+            queue<dfS> temp = genState(s.second); // 从初始项目集产生完整的项目集
+
+            //printf("\n\n%c -pair-> %s\n", s.first, state2str(temp).c_str());
+            if (dfaStat[state2str(temp)] == 0) // 当前状态没有出现过, 则新增一行
+           //  (!isStateExist(dfaStat, state2str(temp)))
+            {
+
+                //dfaStat[state2str(temp)] = ++ts;
+                int sn = dfaStat.size() - 1;  // 移进后的新状态的序号
+                dfaStat[state2str(temp)] = sn; // 标注当前状态已存在
+                lr0dfa[statenum][sn] = s.first; // 绘制Lr0DFA图
+                fillTable(s.second.front(), s.first, statenum, sn, 1);
+         //填写SLR1分析表, 行号为当前状态号statenum, 列号为遍历的s<char, queue<dfS>>的first, 移进符号, 内容为新状态号sn
+                cal.push(temp);
+            }
+            else // 当前状态已存在, 则直接填写Lr0 DFA与 SLR1中对应
+            {
+                int before = dfaStat[state2str(temp)];
+                fillTable(s.second.front(), s.first, statenum, before, 1);
+                lr0dfa[statenum][before] = s.first;
+            }
+
+        }
+        statenum += 1; 
+
+    }
+    //dfatable
+}
+
+
+
+
+// 函数名称: 新生状态完善函数
+// 函数功能: 由移进后初始项目集引入完整项目集
+// 函数参数:  queue<dfS> 新生未完善的项目集 ; flag 生成SLR1则为0 ,生成lar1则为1
+// 函数返回值: 补全后的项目集
+queue<SLR1::dfS> SLR1::genState(queue<dfS> t, int flag)
+{
+    queue<dfS> res; // 完整的项目集
+    map<string, int> distinct; // string表示的项目对象 - 是否为新项目标志 一对一映射
+
+    while (!t.empty()) // 遍历当前新项目集中的项目
+    {
+
+        dfS temp = t.front(); t.pop();
+
+        if ((temp.pointPos < temp.right.length() && !isEnd(temp.right[temp.pointPos])))//句号未到尽头并且句号后为非终结字符
+        {
+            char l = temp.right[temp.pointPos]; // 项目点'.'后面的字符, 这里是非终结符
+            char la = ' '; // LAR1分析多往前看的一个字符, 称为先行字符
+            if (flag == 1 && temp.pointPos + 1 < temp.right.length())// 未到句末, 则先行字符为点后一位
+            {
+                la = temp.right[temp.pointPos + 1];
+            }
+            else 
+            {
+                la = '$';
+            }
+
+
+            queue<string> tq = sentence[l]; // l表示当前项目点号'.' 后面的非终结符, 而这个变量表示这个点后非终结符对应的产生式右部
+            while (!tq.empty()) // 遍历非终结字符对应若干文法规则的右部
+            {
+                string r = tq.front(); tq.pop(); //新项目右部, 点号'.'在右部开头
+                /*if (inc[r[0]] != 0)
+                    continue;
+                else
+                    inc[r[0]] = 1;*/
+                    // if (l == r[0])continue;
+                dfS ds = dfS(l, r); // 产生新的项目
+                if (flag == 1)
+                    ds.last = la;
+                string dss = dfs2str(ds); //将项目对象转为string, 以便标注当前项目是否已产生, 避免重复引入同一项目
+                /*if(flag==1)
+                     dss= dfs2str(ds,1);*/
+                     ////printf("%s -----> %d\n", dss.c_str(), distinct[dss]);
+                if (distinct[dss] == 0) // 处理新的项目
+                {
+                    if (flag == 1)
+                    {//printf("当前%s, 引入%s\n", dfs2str(temp, 1).c_str(), dfs2str(ds, 1).c_str());
+                    }
+                    t.push(ds); // 新项目可能会又会引入新项目, 因此将新项目引入待计算项目队列
+                    distinct[dss] = 1;
+                }
+
+            }
+        }
+
+        res.push(temp); // 引入完新项目后的当前项目作为完整项目集的一员放入
+    }
+    return res;
+}
+
+
+// 函数名称: SLR1分析表填表函数
+// 函数功能: 填写SLR1分析表
+// 函数参数: dfS 归约填表所用项目(归约式); c action; int 行号(原状态); int 表格项(移进状态); int 移进/归约判断符; int LAR1或SLR1标志   
+// 函数返回值: 无
+void SLR1::fillTable(dfS t, char c, int ever, int cur, int mod, int flag)
+{
+
+    //printf("填表:\n ");
+    //printf("形参%s        %c     ever:%d    cur:%d    mod:%d\n", dfs2str(t).c_str(), c, ever, cur, mod);
+    //map<char, map<int, string>> dfatable;//lr0dfa图
+    char c1 = t.last; // LAR1中先行字符
+    char left = t.left; // 归约式左部
+    if (mod == 0)//处理归约填表
+    {
+        // char c = t.right[t.pointPos - 2];
+        if (c == fielement[0] && t.right.size() == 1) // action为文法开始符号且右部长度为1, 说明为第一条产生式, 归约后就accept
+            //t.right.length()-
+        {
+            if (flag == 1)
+            {
+                slr1table['$'][ever] = "accept";
+                //printf("fill1:$ ---> %s\n", slr1table['$'][ever].c_str());
+            }
+            else // 填入accept
+            {
+                dfatable['$'][ever] = "accept";
+                //printf("fill1:$ ---> %s\n", dfatable['$'][ever].c_str());
+            }
+
+        }
+        else if (c == epsion)//对空串进行归约
+        {
+            //1527
+            string prod = str_format("%c -> %s", t.left, t.right.c_str()); // 归约式
+            string res = prod2num[prod]; // 数字化映射后的归约式
+
+            if (flag == 1)
+            {
+                slr1table[c1][ever] = res;
+                //printf("fill22:%c  ---> %s\n", c1, slr1table[c1][ever].c_str());
+            }
+            else
+            {
+                for (auto a : action) // 当前action为epsilon, 说明任意符号都能归约
+                //for(auto a: followSet[left])
+                {
+                    if (dfatable[a][ever].length() == 0)
+                    {
+                        dfatable[a][ever] = res;
+                        //printf("fill22:%c  ---> %s\n", a, dfatable[a][ever].c_str());
+                    }
+                }
+            }
+
+        }
+        else//对正常终结符action归约
+        {
+            //string point="->"
+            //string res = "r(" +t.left + string("->") + t.right + ')';
+            //string res = str_format("r( %c -> %s )", t.left, t.right.c_str());
+            string prod = str_format("%c -> %s", t.left, t.right.c_str()); // 原归约式
+            string res = prod2num[prod]; // 数字化归约式
+            if (flag == 1) //忽略就好, 原来是为了LAR1写的
+            {
+                slr1table[c1][ever] = res;
+                //printf("fill21:%c  ---> %s\n", c1,slr1table[c1][ever].c_str());
+
+            }
+            else
+            {
+                bool FLAG = followSet[left].count('@') != 0; // 左部的follow集合有@(空), 代表任意符号都能归约
+                for (auto a : action) 
+                {
+                    //if (a != c)
+                    if (FLAG == true||followSet[left].count(a) != 0) // 只有归约式左部的follow集合中的元素才可以用于归约, 即填写对应表项
+                    {
+                        if (dfatable[a][ever].length() != 0) // 原表项非空, 需要处理冲突
+                        {
+                            //printf("归约发生冲突!\n");
+                            if (dfatable[a][ever][0] == 'r') // 归约 - 归约冲突
+                            {
+                                //dfatable[a][ever] += '/' + res;
+                                string r1 = num2prod[dfatable[a][ever]];
+                                string r2 = num2prod[res];
+                                //cout << "冲突!  " << dfatable[a][ever];
+                                string resp = "";
+                                QDialog dialog;
+                                QVBoxLayout* layout = new QVBoxLayout(&dialog);
+                                dialog.setWindowTitle("Choose Production for Reduction");
+
+                                QLabel* label = new QLabel(str_format("REDUCTION - REDUCTION COLLISION HAPPEND!\nIn STATE %d,\n choose a production for the reduction of\n the TERMINAL '%c'", ever, a).c_str(), &dialog);
+                                label->adjustSize();
+                                QPushButton* but1 = new QPushButton(QString(r1.c_str()), &dialog);
+                                QPushButton* but2 = new QPushButton(QString(r2.c_str()), &dialog);
+
+                                layout->addWidget(label);
+                                layout->addWidget(but1);
+                                layout->addWidget(but2);
+
+                                QObject::connect(but1, &QPushButton::clicked, [&resp, &but1, &dialog]() {
+                                    resp = but1->text().toStdString();
+                                    dialog.accept();
+                                    });
+                                QObject::connect(but2, &QPushButton::clicked, [&resp, &but2, &dialog]() {
+                                    resp = but2->text().toStdString();
+                                    dialog.accept();
+                                    });
+                                dialog.setFixedSize(400, 300);
+                                dialog.setLayout(layout);
+                                dialog.exec();
+                                //cout << "选择产生式" << resp << endl;
+                                dfatable[a][ever] = prod2num[resp];
+                                //弹出消息窗口
+                                //conf.push(conflict(ever, a, false, true));
+                            }
+                            else //移进 - 归约冲突: 忽略新填入的归约, 不做操作
+                            {
+                                string tt = dfatable[a][ever] + "/" + res;
+                                //cout << "冲突!  " << tt;
+                                //conf.push(conflict(ever, a, true, false));
+                            }
+                        }
+                        else //不发生冲突
+                        {
+                            dfatable[a][ever] = res;
+                            //printf("fill21:%c  ---> %s\n", a, dfatable[a][ever].c_str());
+                        }
+
+                    }
+                }
+            }
+
+
+        }
+    }
+    else//处理移进
+    {
+        //char c = t.right[t.pointPos-1];
+        if (isEnd(c)) // action为终结字符, 则为s state 的表示格式
+        {
+            if (flag != 1 && dfatable[c][ever].length() != 0)
+            {
+                //printf("移进发生冲突!\n");
+                //conf.push(conflict(ever, c, true, false));
+                //dfatable[c][ever] += str_format("/S%d", cur);// 'S' + to_string(cur);
+                dfatable[c][ever] = str_format("s%d", cur);// 'S' + to_string(cur);
+                //string tt = dfatable[c][ever] + "/" + dfs2str(t);
+                ////cout << "冲突!  " << tt;
+
+            }
+
+            else if (flag == 1)
+            {
+                slr1table[c][ever] = 's' + to_string(cur);
+                //printf("fill3:%c  ---> %s", c, slr1table[c][ever].c_str());
+            }
+            else
+            {
+                dfatable[c][ever] = 's' + to_string(cur);
+                //printf("fill3:%c  ---> %s", c, dfatable[c][ever].c_str());
+            }
+
+
+
+        }
+        else // action为非终结字符, 直接填入数字
+        {
+            if (flag != 1 && dfatable[c][ever].length() != 0)
+            {
+                //printf("移进发生冲突!\n");
+                //conf.push(conflict(ever, c, true, false));
+                //dfatable[c][ever] += str_format("/S%d", cur);// 'S' + to_string(cur);
+                dfatable[c][ever] = str_format("s%d", cur);// 'S' + to_string(cur);
+                //string tt = dfatable[c][ever] + "/" + dfs2str(t);
+                ////cout << "冲突!  " << tt;
+            }
+
+            else if (flag == 1)
+            {
+                slr1table[c][ever] = to_string(cur);
+                //printf("fill4:%c  ---> %s", c, slr1table[c][ever].c_str());
+            }
+            else
+            {
+                dfatable[c][ever] = to_string(cur); // 直接填入数                //printf("fill4:%c  ---> %s", c, dfatable[c][ever].c_str());
+            }
+
+
+
+        }
+
+    }
+
+}
+
+
+// 函数名称: LAR1 分析表生成函数
+// 函数功能: 生成LAR1分析表
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::LR1DFA()
+{
+    queue<queue<dfS>> cal;
+    dfS temp = dfS(Gbegin, fielement.substr(0, 1));
+    queue<dfS> t;
+    t.push(temp);
+    queue<dfS> t2 = genState(t, 1);
+    cal.push(t2);
+
+    slrStat[state2str(cal.front(), 1)] = -1;
+    int statenum = 0;
+    while (!cal.empty())
+    {
+
+        queue<dfS> states = cal.front(); cal.pop();
+        //printf("\n\n\n-----当前状态-----\n");
+        printState(states, 1);
+
+        //printf("----------------\n");
+        ////queue<dfS> states = genState(temp);
+        /*if (dfaStat[state2str(states)] == 0)
+            continue;
+        else
+            dfaStat[state2str(states)] = statenum++;*/
+        map<char, queue<dfS>> curs;//当前状态
+        while (!states.empty())
+        {
+
+            dfS t = states.front(); states.pop();
+            //printf("\n\n当前扫描的语句是%s\n", dfs2str(t).c_str());
+            if (t.pointPos == t.right.length())
+            {
+                char c = t.right[t.pointPos - 1];
+                //printf("\n\n需要归约的规则是%s\n", dfs2str(t).c_str());
+                fillTable(t, c, statenum, statenum, 0, 1);
+                continue;
+            }
+            else if (t.right[0] == epsion)
+            {
+                //printf("\n\n需要归约的规则是%s\n", dfs2str(t).c_str());
+                fillTable(t, epsion, statenum, statenum, 0, 1);
+                continue;
+            }
+            char bp = ' ';
+            bp = t.right[t.pointPos];
+            t.pointPos += 1;
+            curs[bp].push(t);
+
+        }
+        //int ts = statenum;
+        for (auto s : curs)
+        {
+
+            queue<dfS> temp = genState(s.second, 1);
+            //printf("\n\nstate:%d - %c -> %s\n", statenum,s.first, state2str(temp, 1).c_str());
+            if (slrStat[state2str(temp, 1)] == 0)//  !isStateExist(slrStat, state2str(temp, 1))
+            {
+
+                //dfaStat[state2str(temp)] = ++ts;
+                int sn = slrStat.size() - 1;
+                slrStat[state2str(temp, 1)] = sn;
+                fillTable(s.second.front(), s.first, statenum, sn, 1, 1);
+                cal.push(temp);
+            }
+            else
+            {
+
+                fillTable(s.second.front(), s.first, statenum, slrStat[state2str(temp, 1)], 1, 1);
+            }
+
+        }
+        statenum += 1;
+    }
+}
+
+
+// 函数名称: 分析过程处理函数
+// 函数功能: 处理读入的符号串, 生成分析表
+// 函数参数: string 输入的串
+// 函数返回值: 无
+bool SLR1::processStack(string input)
+{
+    input += '$'; // 加入输入结束符号
+    if (input.size() == 0) 
+    {
+        messageBox("E1: Null string received!");
+        return false;
+    }
+    anaTable[0][1] = input.substr(0, 10); // 填写分析过程表第一行, 填入输入串对应表项
+    stack<string> anal; //分析栈
+    anal.push("0");
+    //stack<int> states;// 分析栈1之状态栈
+    //stack<char> acts;// 分析栈2之动作栈
+    char c = ' ';// 读取的输入串首部元素
+    int s = 0; // 当前状态
+    int head = 0; // 指向输入串头部元素
+    string item= dfatable[c][s]; // 对应行号s 列号c的状态转化表表项
+    
+    do // 不断在Slr1分析表中转移, 至accept或提前不符文法跳出
+    {
+        c = input[head]; // 当前读取字符
+        s = str2int(anal.top()); // 分析栈栈顶状态
+        //s = states.top();
+        item = dfatable[c][s]; // 行号为栈顶状态, 列号为当前读取字符对应的Slr1分析表表项
+        //cout << endl << endl << "当前input:" << input.substr(head, 10) << endl;
+       // cout << "当前状态: " << s << " 经过动作:"<<c << "  完成事件:" << item;
+        if (item[0] == 's'||isdigit(item[0])!=0) // 处理移进状态
+        {
+            //cout << "处理移进" << endl;
+            anal.push(string{ c });
+            //acts.push(c);
+            //states.push(str2int(item.substr(1, item.size())));
+            if (isdigit(item[0]) != 0) // 处理goto
+            {
+                anal.push(item);
+            }
+            else // 处理移进
+                anal.push(item.substr(1, item.size()));
+           
+            if(isEnd(c)) // 如果用于移进的action为终结字符, 则生成新的叶子结点
+               geneTreeNode(c);
+
+            head += 1; 
+        }
+        else if (item[0] == 'r') // 处理归约状态
+        {
+            //cout << "处理归约" << endl;
+            string prod = num2prod[item]; // 完整归约式
+            char left = prod[0]; // 归约式左部
+            string right = prod.substr(5, prod.size()); // 归约式右部
+            ////cout << left << "->" << right << endl;
+            geneTreeNode(left, right);
+            for (char c : right) // 将归约式左部对应的右部符号从分析栈中弹出, 代表它们已归约成左部
+            {
+                if (c == '@') continue;
+                //states.pop();
+                //acts.pop();
+                anal.pop();
+                anal.pop();
+            }
+            head -= 1;
+            input[head] = left;
+        }
+      
+        if (!fillAnaTab(anal, input.substr(head, 10), item, c, s)) 
+        {
+            return false;
+        }
+    } while (item != "accept" && item.size() != 0);
+    return true;
+}
+
+
+// 函数名称: SLR1主控函数
+// 函数功能: 输入文法规则, 生成first集合, follow集合, Lr0DFA, SLR1分析表
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::start()
+{
+    init1();
+    input();
+    bool change = false;
+
+    for (auto c : fielement) // 逐个遍历左部非终结符求解其first集合
+    {
+        //int prelen = firstSet[c].size();
+        first(c);
+        //printf("%c", c);
+        printSet(firstSet[c]);
+    }
+
+    do {
+        for (auto c : fielement)
+        {
+            int prelen = firstSet[c].size();
+            first(c);
+            //printf("%c", c);
+            printSet(firstSet[c]);
+        }
+    } while (change);
+    //printf("++++++++++\n");
+    //for (auto c : firstSet)
+    //{
+    //    //printf("%c",c.first);
+    //}
+    //printf("++++++++++\n");
+    //for (auto c : firstSet)
+    //{
+    //    //printf("%c include:",c.first);
+    //    for (auto e : c.second)
+    //    {
+    //        //printf("%c ",e);
+    //    }
+    //    //printf("\n\n\n");
+    // 
+    //}
+
+    follow();
+    //printf("**************\n");
+    //for (auto c : followSet)
+    //{
+    //    //printf("%c finclude:", c.first);
+    //    for (auto e : c.second)
+    //    {
+    //        //printf("%c ", e);
+    //    }
+    //    //printf("\n");
+    //}
+    //printf("结束\n");
+
+
+    //下面输出dfa图
+
+
+    slr1DFA();
+    // map<char, map<int, string>> dfatable;//lr0dfa图
+    //printf("下面输出lr0dfa图\n");
+    //for (int i = 0; i < dfaStat.size(); i++)
+    //{
+    //    //printf("\n%d:  ", i);
+    //    for (int j = 0; j < dfaStat.size(); j++)
+    //    {
+    //        //printf("%c[%d]    ", lr0dfa[i][j], j);
+    //    }
+    //   
+    //}
+    //map<char, map<int, string>> dfatable;//slr1dfa图
+    //下面输出slr1分析表
+   // for (auto c : dfatable)
+   // {
+   //     printf("\n\n+++++++++++++++++++++++++++++\n");
+   //     printf(">>%c<< : \n", c.first);
+   //     for (auto p : c.second)
+   //     {
+   //         printf("state %d  --> %s\n", p.first, p.second.c_str());
+   //     }
+   // }
+   // printf("\nall state:\n");
+   // for (auto p : dfaStat)
+   // {
+   //     printf("S%d: %s\n", p.second, p.first.c_str());
+   // }
+    //printf("下面输出slr1分析表\n");//最新版
+
+    //for (int i = 0; i < dfaStat.size(); i++)//
+    //{
+
+    //    printf("\n%d: ", i);
+    //    for (auto p : dfatable)
+    //    {
+    //        if (p.second[i].size() != 0)
+    //            printf("[%c]%s    ", p.first, p.second[i].c_str());
+
+    //    }
+
+    //}
+
+    ////以下是文法错误分析
+    //if (!conf.empty())
+    //{
+    //    //printf("\n\n错误如下:\n");
+    //    while (!conf.empty())
+    //    {
+    //        conflict temp = conf.top(); conf.pop();
+    //        //printf("%s\n",temp.err().c_str());
+    //    }
+    //}
+    //else
+    //{
+    //  //以下为lr1文法分析表
+    //    LR1DFA();
+    //    for (auto c : slr1table)
+    //    {
+    //        //printf("\n\n+++++++++++++++++++++++++++++\n");
+    //        //printf(">>%c<< : \n", c.first);
+    //        for (auto p : c.second)
+    //        {
+    //            //printf("state %d  --> %s\n", p.first, p.second.c_str());
+    //        }
+    //    }
+    //    //printf("\nall state:\n");
+    //    for (auto p : slrStat)
+    //    {
+    //        //printf("S%d: %s\n", p.second, p.first.c_str());
+    //    }
+        //printf("\n\n");
+        //printf("\n\n下面输出slr1dfa图\n\n");
+        //for (int i = 0; i < slrStat.size(); i++)//
+        //{
+
+        //    printf("\n%d: ", i);
+        //    for (auto p : slr1table)
+        //    {
+
+        //        printf("[%c]%s    ", p.first, p.second[i].c_str());
+
+        //    }
+
+        //}
+
+    //}
+    showFir();
+    showFoll();
+    showJud();
+    showMap();
+    showLr0();
+    showSlr1();
+    //cout << "程序输出结束" << endl;
+}
+
+// 函数名称: 字符集合输出函数
+// 函数功能: 将一个字符集合输出
+// 函数参数: set<char> 待输出字符集合
+// 函数返回值: 无
+void SLR1::printSet(set<char> s)
+{
+    ////printf("{");
+    //for (auto c : s)
+    //{
+    //    //printf("%c,", c);
+    //}
+    ////printf("}\n");
+}
+
+
+// 函数名称: 字符集合转字符串函数
+// 函数功能: 将一个字符集合转换成字符串
+// 函数参数: set<char> 待转换字符数组
+// 函数返回值: 无
+string SLR1::set_str(set<char> o)
+{
+    //string result = "{ ";
+    string result = "";
+    for (auto a : o)
+    {
+        //result += a;
+        //result += ',';
+        result += str_format("%c   ", a);
+    }
+    //result.erase(result.find_last_of(','));
+    //result += " }";
+    return result;
+
+}
+
+
+// 函数名称: 字符集合合并函数
+// 函数功能: 读取两个字符集合, 将前者并入后者
+// 函数参数: set<char> 被添加的集合; set<char> 待添加元素集合
+// 函数返回值: 无
+void SLR1::addAll(set<char>& a, set<char>& b, char ban)
+{
+    for (auto c : a)
+    {
+        if (c != ban)
+            b.insert(c);
+    }
+}
+
+
+
+// 函数名称: 树节点内存释放函数
+// 函数功能: 释放树节点生成的所申请的空间
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::deleteTree()
+{
+
+    for (auto p : nodes)
+    {
+        while (!p.second.empty())
+        {
+            delete p.second.top();
+            p.second.pop();
+        }
+   }
+}
+
+// 函数名称: 项目对象转字符串函数
+// 函数功能: 将项目对象按照 左部 右部 点号位置 (先行字符)? 组织成字符串
+// 函数参数: dfS 项目对象; flag 是否为Lar1项目的标志
+// 函数返回值: 项目对象转成的字符
+string SLR1::dfs2str(dfS t, int flag)
+{
+    string res = t.left + t.right + to_string(t.pointPos);
+    if (flag == 1)
+        res = str_format("%c%s%d%c", t.left, t.right.c_str(), t.pointPos, t.last);
+    return res;
+}
+
+// 函数名称: 项目集转string函数
+// 函数功能: 将项目集中项目对象转string, 然后将这些string连接起来成为一个项目集唯一对应的string对象
+// 函数参数: queue<dfS> 项目集; flag 是否为Lar1项目集耳朵标志
+// 函数返回值: string化后的项目集
+string SLR1::state2str(queue<dfS> s, int flag)
+{
+    string res;
+    while (!s.empty())
+    {
+        dfS temp = s.front(); s.pop();
+        res += dfs2str(temp, flag);
+    }
+    return res;
+}
+
+
+// 函数名称: 项目集输出函数
+// 函数功能: 将一个项目集中每个项目转成string输出
+// 函数参数: queue<dfS> 项目集; int 是否为Lar1的标志
+// 函数返回值: 无
+void SLR1::printState(queue<dfS> s, int flag)
+{
+    //while (!s.empty())
+    //{
+    //    dfS t = s.front(); s.pop();
+    //    printf("%s\n", dfs2str(t, flag).c_str());
+    //}
+    //printf("\n");
+}
+
+
+// 函数名称: 当前状态是否存在判断函数
+// 函数功能: 读取一个SLr1DFA图与一个状态, 判断DFA图中是否有该状态
+// 函数参数: map<string, int> 表示DFA ; string 表示string化后的一个状态(项目集)
+// 函数返回值: 当前状态是否存在DFA图中的标志
+bool SLR1::isStateExist(map<string, int> s, string t)
+{
+    for (auto st : s)
+    {
+        if (st.first == t)
+            return true;
+    }
+    return false;
+}
+
+
+// 函数名称: slr1文法判断函数
+// 函数功能: 判断一个项目集是否存在冲突
+// 函数参数: queue<dfS> 项目集; int 状态(项目集)序号
+// 函数返回值: 当前状态是否存在冲突的标志
+bool SLR1::isSlr1(queue<dfS>q, int s)
+{
+    //printf("\n进入slr1文法判断:\n");
+    printState(q);
+    bool flag = false; // 当前状态是否存在冲突的标志
+    dfS se[100]; // 存放当前状态的项目对象数组, 以便通过行列遍历
+    int size = q.size(); // 确定项目对象数组遍历个数
+    for (int i = 0; i < size; i++)
+    {
+        dfS temp = q.front(); q.pop();
+        se[i] = temp;
+    }
+    // set<dfS> se;
+    /* while (!q.empty())
+     {
+         dfS temp = q.front(); q.pop();
+         se.insert(temp);
+     }*/
+
+     //判断归约 - 归约和归约 - 移进冲突
+    for (int i = 0; i < size; i++)
+    {
+        dfS it = se[i];
+        if (it.pointPos == it.right.length())
+        {
+            for (int j = 0; j < size; j++)
+            {
+                if (i <= j)continue;
+                dfS cm = se[j];
+                char r = cm.right[cm.pointPos];
+                if (cm.pointPos == cm.right.length()) // 归约 - 归约
+                {
+                    set<char> in = inter(followSet[cm.left], followSet[it.left]);
+                    if (in.size() != 0)
+                    {
+                        flag = true;
+                        string act = set_str(in);
+                        conflict c = conflict(s, act, false, true); // 
+                        c.prj.push(it);
+                        c.prj.push(cm);
+                        conf.push(c);
+                    }
+                }
+                else if (cm.pointPos < cm.right.length() && isEnd(r)) // 归约 - 移进
+                {
+                    set<char> fob = followSet[it.left];
+                    if (fob.count(r) != 0)
+                    {
+                        flag = true;
+                        string act = str_format("{%c}", r);
+                        conflict c = conflict(s, act, true, false);
+                        c.prj.push(it);
+                        c.prj.push(cm);
+                        conf.push(c);
+                    }
+                }
+            }
+        }
+    }
+
+    //判断移进 - 归约冲突
+    for (int i = 0; i < size; i++)
+    {
+        dfS x = se[i];
+        char  r = x.right[x.pointPos];
+        if (x.pointPos < x.right.length() && isEnd(r))
+        {
+            for (int j = 0; j < size; j++)
+            {
+                if (i <= j)continue;
+                dfS b = se[j];
+                if (b.pointPos != b.right.length())
+                    continue;
+                set<char> fob = followSet[b.left];
+                if (fob.count(r) != 0)
+                {
+                    flag = true;
+                    string act = str_format("{%c}", r);
+                    conflict c = conflict(s, act, true, false);
+                    c.prj.push(x);
+                    c.prj.push(b);
+                    conf.push(c);
+                }
+            }
+        }
+    }
+    return flag;
+}
+
+// 函数名称: 字符
+// 函数功能: 读取文本框中多行输入的, 有单词组成的文法规则
+// 函数参数: set<char> 求交集集合1;set<char> 求交集集合2
+// 函数返回值: 交集
+set<char> SLR1::inter(set<char> s1, set<char> s2)
+{
+    set<char> inter;
+    set_intersection(s1.begin(), s1.end(), s2.begin(), s2.end(), inserter(inter, inter.begin()));
+    return inter;
+}
+
+
+// 函数名称: 警告信息弹窗函数
+// 函数功能: 弹出带有指定警告信息的弹窗
+// 函数参数: string 警告信息
+// 函数返回值: 无
+void SLR1::messageBox(string s)
+{
+    QMessageBox::warning(this, tr("Message"), tr(s.c_str()));
+}
+
+
+// 函数名称: Run视图检查函数
+// 函数功能: 检查Run视图各项输入是否有正确设置
+// 函数参数: 无
+// 函数返回值: Run视图输入正确标志
+bool SLR1::checkRun()
+{
+    // 检查文本框输入是否正常并将其读入文件  in.txt
+    QTextDocument* doc = ui.textplainTextEdit->document();
+    int i = 0;
+    string firstLine = "";
+    do {
+        QTextBlock textblock = doc->findBlockByNumber(i++);
+        firstLine= textblock.text().toStdString();
+
+    } while (firstLine.size() == 0);
+   
+    
+    if (dfatable.size() == 0)
+    {
+        messageBox("E6: Please generate the SLR1 parsing table before performing syntax analysis.");
+        return false;
+    }
+    if (firstLine.find("tips") != string::npos)
+    {
+        messageBox("E2: Please browse to open a file or directly enter text in the text box");
+        return false;
+    }
+    if ((firstLine[0] != 'L'&& (ui.lexcheckBox->isChecked() == true))|| (firstLine[0] == 'L' && (ui.srccheckBox->isChecked() == true)))
+    {
+        messageBox("E8: Please select the PROPER input mode (lex file/source file)");
+        return false;
+    }
+    // 检查输入模式是否正确设置
+    if ((ui.lexcheckBox->isChecked() == false) && (ui.srccheckBox->isChecked() == false))
+    {
+        messageBox("E3: Please select the input mode (lex file/source file)");
+        return false;
+    }
+    return true;
+}
+
+
+// 函数名称: lex编码转字符串函数
+// 函数功能: 读取单词编码并将其转换成字符串
+// 函数参数: 无
+// 函数返回值: 读取的lex编码转成的字符串
+string SLR1::lex2str()
+{
+    char cwd[256];
+    _getcwd(cwd, 256);
+    string path ="\\newlex.lex";
+    path = cwd + path;
+    ifstream f(path);
+    if (!f) {
+        messageBox(str_format("can't read file %s", path.c_str()));
+        abort();
+    }
+    string inputstr = "";
+    string line = "";
+
+    while (std::getline(f, line))
+    {
+        ////cout << str_format("处理%s", line.substr(0, 3).c_str()) << endl;
+        if (line.size() == 0 || line.find("comment") != string::npos) continue;
+        trimAll(line, ' ');
+        int pos = 0;
+        int len = line.size();
+        if ((pos = line.find("reservedWord")) != string::npos) // 处理关键字编码
+        {
+            string t = line.substr(pos + 13, len);
+            inputstr += l2w[t];
+            //isAst[t] = 1;
+
+        }
+        else if ((pos = line.find("sign")) != string::npos) // 处理运算符
+        {
+            inputstr += l2w[line.substr(pos + 5, len)];
+        }
+        else // 处理标识符与数字
+        {
+            pos = line.find_last_of(':');
+            int rs = line.find(')');
+            string temp = line.substr(pos + 1, rs - pos - 1);
+            if (line[pos - 1] == 'e')
+            {
+                idseq.push(temp);
+                inputstr += l2w["identifier"];
+            }
+            else
+            {
+                numseq.push(temp);
+                inputstr += l2w["number"];
+            }
+        }
+    }
+    return inputstr;
+}
+
+
+// 函数名称: 字符串形式的整数转int函数
+// 函数功能: 将string形式的整数转成int类型
+// 函数参数: string形式的整数
+// 函数返回值: int形式的整数
+int SLR1::str2int(string s)
+{
+    trimAll(s,' ');
+    int result = 0;
+    for (char c : s) 
+    {
+        if (c >= '0' && c <= '9') {
+            result = result * 10 + (c - '0');
+        }
+        else {
+            // Handle error: non-digit character found in the string
+            messageBox("Number conversion failed!") ;
+        }
+    }
+    return result;
+
+}
+
+
+
+// 函数名称: 语法树结点生成函数
+// 函数功能: 为对应字符生成结点
+// 函数参数: char 字符; right 归约式右部
+// 函数返回值: 无
+void SLR1::geneTreeNode(char c, string right)
+{
+    string word = w2l[c];
+
+    treeNode *node = new treeNode(word);
+    node->num = nodenum++;
+    if (isEnd(c)) // 终结字符, 直接生成叶子结点
+    {
+        //cout <<endl<< "当前生成叶子结点" << word <<"("<<node->num<<")"<< endl;
+        if (word == "identifier")
+        {
+            node->value = idseq.front(); idseq.pop();
+        }
+        else if (word == "number")
+        {
+            node->value = numseq.front(); numseq.pop();
+        }
+    }
+    else // 终结字符, 除了生成结点之外, 还会将其作为左部的归约式的右部(不包括epsilon)已生成的结点挂入该结点
+    {
+        //string prod = str_format("%c -> %s", begin, right.c_str());
+        //prod2num[prod] = str_format("r%d", num);
+        //cout <<endl<< "当前生成非叶子结点" << word << "(" << node->num << ")" <<" 使用归约式" <<c<<"->"<<right<<"进行结点合并" << endl;
+        
+        if (right[0] == '@' && right.size() ==1) {}
+        else
+        {
+            int size = node->child.size() + 1;
+            for (char c : right)
+            {
+
+                treeNode* child = nodes[c].top();
+                //cout << child->num << "->" << node->num << endl;
+                //cout << "将" << child->name << "(" << child->num << ")" << "挂入" << node->name << "(" << node->num << ")" << endl;
+                node->child[size] = child;
+                size += 1;
+                nodes[c].pop();
+            }
+        }
+
+    }
+
+    nodes[c].push(node);
+}
+
+
+
+// 函数名称: 缩进字符串生成函数
+// 函数功能: 生成指定长度, 指定字符的缩进内容
+// 函数参数: int 缩进长度; c 缩进字符
+// 函数返回值: 缩进字符串
+string SLR1::outspace(int i, char c)
+{
+    string s = "";
+    i *= 2;
+    while (i-- > 0) s += c;
+    return s;
+}
+
+int SLR1::shiftAst(treeNode* child, treeNode* parent, int mode)
+{
+    int node = mode % 2;
+    int value = (mode / 2) % 2;
+    int name = (mode / 4) % 2;
+
+    if (value == 1)
+    {
+        cout << "值取代" << endl;
+        cout << "用孩子值" << child->value << "  取代父亲值" << parent->value << endl;
+        parent->value = child->value;
+    }
+    if (name == 1)
+    {
+        cout << "名取代" << endl;
+        cout << "用孩子名字" << child->name << "  取代父亲名字" << parent->name << endl;
+        parent->name = child->name;
+    }
+    return node;
+}
+
+
+
+// 函数名称: 抽象语法树窗口输出函数
+// 函数功能: 前序遍历输出抽象语法树
+// 函数参数: treeNode* 抽象语法树节点; layer 结点层次
+// 函数返回值: 无
+void SLR1::asTtreeInfo(treeNode* root, int layer)
+{
+    if (root->astChild.size() == 0)
+    { 
+        root->layer = layer;
+        cout << outspace(layer,'-') + root->toStr() << endl;
+        return;
+    }
+    cout << outspace(layer,'-') + root->toStr() << endl;
+    for (auto c : root->astChild)
+    {
+        asTtreeInfo(c.second,layer+1);
+    }
+}
+
+
+// 函数名称: 分析树输出函数
+// 函数功能: 前序遍历输出分析树
+// 函数参数: treeNode* 抽象语法树节点; layer 结点层次
+// 函数返回值: 无
+void SLR1::treeInfo(treeNode* root, int layer)
+{
+    if (root->child.size() == 0)
+    {
+        root->layer = layer;
+        cout << outspace(layer, '-') <<"Layer "<<layer<<"  " << root->toStr() << endl;
+        return;
+    }
+    cout << outspace(layer, '-') << "Layer " << layer << "  " << root->toStr() << endl;
+    ////cout << outspace(layer, '-') + root->toStr() << endl;
+    for (auto c : root->child)
+    {
+        treeInfo(c.second, layer + 1);
+    }
+}
+
+
+// 函数名称: 分析树生成抽象语法树函数
+// 函数功能: 由分析树生成抽象语法树
+// 函数参数: treeNode* 语法树结点; treeNode* 当前语法树结点的父节点
+// 函数返回值: 无
+void SLR1::geneAST(treeNode* root, treeNode* astParent)
+{
+    
+    if (root == NULL) return;
+    //cout <<endl<< "当前结点:" << root->name <<"("<<root->num<<")" << "   当前父亲:" << astParent->name<<"(" << astParent->num << ")" << endl;
+    if (root->child.size() == 0) // 处理叶子结点
+    {  
+        string name = root->name;
+        string pname = astParent->name;
+        cout <<endl<<endl<< "当前叶子为" << name << ", 当前父亲为" << pname << endl;
+        if (!isAstNode(name)) return;
+        //cout << "到达可叶子结点" << root->name <<endl;
+        string op = ">@<@>=@<=@!=@<>@+=@-=@*=@/=@%=@++@--@&&@||@:=@";
+        if (op.find(name) != string::npos) // 叶子结点是运算符, 会顶替父节点, 具体实现就是不生成结点, 但是会顶替父节点的值
+        {
+            cout << name << "是运算符, 不生成结点但会替代父结点名字" << astParent->name << endl;
+            astParent->name = name;
+            return;
+        }
+        else // 处理非运算符的叶子结点
+        {  
+            string t = pname + '~' + name;
+            if (isAst[t] > 0) // 需要特殊处理的叶子结点
+            {
+                cout << name << "与" << pname << "存在特殊关系" << t << endl;
+                if (shiftAst(root, astParent, isAst[t]) == 0) //对应标志位为0, 不生成结点
+                    return;
+            }
+        }
+        cout << name << "保留模式, 将作为孩子插入到" << astParent->name << "结点" << endl;
+        int size = astParent->astChild.size();
+        astParent->astChild[size] = root;
+        return;
+    }
+    
+    if (isAstNode(root->name)) // 是AST结点就保留, 并将当前结点挂入父节点就成为新的父结点
+    {
+            
+            string t = root->name;
+            
+            //cout << "当前" << root->name << "(" << root->num << ")" << "需要保留, 将其插入父亲结点" << astParent->name << "(" << astParent->num << ")" << endl;
+            int size = astParent->astChild.size();
+
+            astParent->astChild[size] = root;
+            astParent = root;
+    }
+    for (auto child : root->child)// 前序遍历
+    {
+        geneAST(child.second, astParent);
+    }
+    if ( root->astChild.size() == 1) // 如果当前结点前序遍历完后, 孩子结点只有一个, 为了美观, 直接将其与父节点视情况合并部分
+    {
+        treeNode* child = root->astChild.begin()->second;
+        cout <<endl<<endl<< root->name << "仅有孩子" << child->name << ", 需要坍塌" << endl;
+        if(shiftAst(child,root,isAst[root->name])==0) // 标志位为0说明不保存该结点
+            root->astChild.clear();
+    }
+    return;
+}
+
+
+// 函数名称: 是否为AST结点判断函数
+// 函数功能: 根据结点名称判断对应结点是否会在AST中保存
+// 函数参数: string 结点名称
+// 函数返回值: 对应结点是否值得保存的标志
+bool SLR1::isAstNode(string name)
+{
+    
+    if (OP.find(name) != string::npos||isAst[name]!=0)
+        return true;
+    return false;
+}
+
+
+// 函数名称: first集合显示函数
+// 函数功能: qt界面显示first集合
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::showFir()
+{
+    // map<char, set<char>> firstSet;//first集合
+
+    int cols = 2;
+    int rows = firstSet.size();
+    ui.firsttableWidget->setColumnCount(cols);
+    ui.firsttableWidget->setRowCount(rows);
+    QStringList title = QStringList() << "character" << "first set";
+    ui.firsttableWidget->setHorizontalHeaderLabels(title);
+
+    int rownum = 0;
+
+    for (auto p : firstSet)
+    {
+        if (!(isalpha(p.first))) continue;
+        ui.firsttableWidget->insertRow(rownum);//在表格中新增一行
+
+        ui.firsttableWidget->setItem(rownum, 0, new QTableWidgetItem(str_format("%c", p.first).c_str()));
+        ui.firsttableWidget->setItem(rownum, 1, new QTableWidgetItem(set_str(p.second).c_str()));
+
+    }
+    ui.firsttableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);    //x先自适应宽度
+    ui.firsttableWidget->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);     //然后设置要根据内容使用宽度的列
+}
+
+
+// 函数名称: AST显示函数
+// 函数功能: qt界面显示AST
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::showAST()
+{
+    treeNode* root = nodes[fielement[0]].top();
+    if (root == NULL) return;
+
+    QStandardItemModel*  model = new QStandardItemModel();
+    model->setColumnCount(1);
+
+    QStringList headers;
+    headers << "AST"; // 设置表头标题为"AST"
+    model->setHorizontalHeaderLabels(headers);
+
+    string content = root->str();
+    root->gui= new QStandardItem(content.c_str());
+    model->appendRow(root->gui);
+
+    queue<treeNode*> cal;
+    treeNode* temp = root;
+    cal.push(temp);
+    while (!cal.empty())
+    {
+        temp = cal.front();cal.pop();  
+        for (auto c : temp->astChild)
+        {
+            treeNode* child = c.second;
+            child->addGuiPa(temp->gui);
+            if (child->astChild.size() != 0)
+            {
+                cal.push(child);
+            }
+        }
+    }
+
+    ui.treeView->setModel(model);
+    ui.treeView->expandAll();
+}
+
+// 函数名称: follow集合显示函数
+// 函数功能: qt界面显示follow集合
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::showFoll()
+{
+    //map<char, set<char>> followSet;//follow集合
+
+    int cols = 2;
+    int rows = followSet.size();
+
+    ui.followtableWidget->setColumnCount(cols);
+    ui.followtableWidget->setRowCount(rows);
+    QStringList title = QStringList() << "character" << "follow set";
+    ui.followtableWidget->setHorizontalHeaderLabels(title);
+
+    int rownum = 0;
+
+    for (auto p : followSet)
+    {
+        if (!(isalpha(p.first))) continue;
+        ui.followtableWidget->insertRow(rownum);//在表格中新增一行
+
+        ui.followtableWidget->setItem(rownum, 0, new QTableWidgetItem(str_format("%c", p.first).c_str()));
+        ui.followtableWidget->setItem(rownum, 1, new QTableWidgetItem(set_str(p.second).c_str()));
+
+    }
+    ui.followtableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);    //x先自适应宽度
+    ui.followtableWidget->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);     //然后设置要根据内容使用宽度的列
+}
+
+// 函数名称: 映射显示函数
+// 函数功能: qt界面显示单词 - 字符映射, 数字化归约式 - 完整归约式映射
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::showMap()
+{
+    int cols = 2;
+    int rows = w2l.size();
+    ui.map1tableWidget->setColumnCount(cols);
+    ui.map1tableWidget->setRowCount(rows);
+    QStringList title = QStringList();
+    string w = "GRAMMAR WORDS";
+    string l = "MAPPED LETTERS";
+    title << w.c_str() << l.c_str();
+    ui.map1tableWidget->setHorizontalHeaderLabels(title);
+    int i = 0;
+    //ui.map1tableWidget->insertRow(i);
+    //ui.map1tableWidget->setItem(i, 0, new QTableWidgetItem("123"));
+    //ui.map1tableWidget->setItem(i, 1, new QTableWidgetItem("456"));
+    ////cout << "输出w2l:" << endl;
+    //for (auto p : w2l)
+    //{
+    //    string word = str_format("%s", p.second.c_str());
+    //    string letter = string{ p.first };
+    //    //cout << "word:" << word << " --- " << "letter:" << letter << endl;
+    //}
+    for (auto p : w2l)
+    {
+        ui.map1tableWidget->insertRow(i);//在表格中新增一行
+
+        ////cout << ">>" << str_format("%s", p.second.c_str()).c_str() <<" --- "<< string{ p.first } << endl;
+        string word = str_format("%s", p.second.c_str());
+        string letter = string{ p.first };
+        ui.map1tableWidget->setItem(i, 0, new QTableWidgetItem(word.c_str()));
+        ui.map1tableWidget->setItem(i, 1, new QTableWidgetItem(letter.c_str()));
+        i += 1;
+    }
+    ui.map1tableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);    //x先自适应宽度
+    ui.map1tableWidget->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);     //然后设置要根据内容使用宽度的列
+
+
+    int cols2 = 2;
+    int rows2 = prod2num.size();
+    ui.map2tableWidget->setColumnCount(cols2);
+    ui.map2tableWidget->setRowCount(rows2);
+    QStringList title2 = QStringList();
+    string w2 = "PRODUCTIONS";
+    string l2 = "NUMBERS";
+    title2 << w2.c_str() << l2.c_str();
+    ui.map2tableWidget->setHorizontalHeaderLabels(title2);
+    int j = 0;
+    for (auto p : prod2num)
+    {
+        ui.map2tableWidget->insertRow(j);//在表格中新增一行
+
+        ////cout << ">>" << p.first.c_str() << " --- " << p.second.c_str() << endl;
+        ui.map2tableWidget->setItem(j, 0, new QTableWidgetItem(p.first.c_str()));
+        ui.map2tableWidget->setItem(j, 1, new QTableWidgetItem(p.second.c_str()));
+        j += 1;
+    }
+    ui.map2tableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);    //x先自适应宽度
+    ui.map2tableWidget->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);     //然后设置要根据内容使用宽度的列
+}
+
+// 函数名称: Lr0DFA显示函数
+// 函数功能: qt界面显示Lr0DFA邻接矩阵
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::showLr0()
+{
+
+    int cols = dfaStat.size();
+    int rows = dfaStat.size();
+    ui.lr0tableWidget->setColumnCount(cols + 1);
+    ui.lr0tableWidget->setRowCount(rows);
+    QStringList title = QStringList();
+    title << "";
+    for (int i = 0; i < dfaStat.size(); i++)
+    {
+        string s = str_format("S%d  ", i);
+        title << s.c_str();
+    }
+    ui.lr0tableWidget->setHorizontalHeaderLabels(title);
+
+
+    for (int i = 0; i < dfaStat.size(); i++)
+    {
+
+        ui.lr0tableWidget->insertRow(i);//在表格中新增一行
+
+        ui.lr0tableWidget->setItem(i, 0, new QTableWidgetItem(str_format("S%d  ", i).c_str()));
+
+        for (int j = 0; j < dfaStat.size(); j++)
+        {
+            ui.lr0tableWidget->setItem(i, j + 1, new QTableWidgetItem(str_format("%c", lr0dfa[i][j]).c_str()));
+        }
+
+
+    }
+    ui.lr0tableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);    //x先自适应宽度
+    ui.lr0tableWidget->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);     //然后设置要根据内容使用宽度的列
+
+}
+
+// 函数名称: SLR1分析表显示函数
+// 函数功能: qt界面显示SLR1分析表
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::showSlr1()
+{
+    // map<char, map<int, string>> dfatable;//slr1dfa图
+
+    int cols = dfatable.size();
+    int rows = dfaStat.size();
+    ui.lr1tableWidget->setColumnCount(cols + 1);
+    ui.lr1tableWidget->setRowCount(rows);
+    QStringList title = QStringList();
+    title << "";
+    for (auto c : dfatable)
+    {
+
+        string s = str_format("%c", c.first);
+        /*if (!isEnd(c.first))
+            s = "Goto" + s;*/
+        title << s.c_str();
+    }
+    ui.lr1tableWidget->setHorizontalHeaderLabels(title);
+
+
+    for (int i = 0; i < dfaStat.size(); i++)
+    {
+
+        ui.lr1tableWidget->insertRow(i);//在表格中新增一行
+
+        /*for (int j = 0; j < dfaStat.size(); j++)
+        {
+            ui.lr0tableWidget->setItem(i, j, new QTableWidgetItem(str_format("(%d , %d)  ",i,j ).c_str()));
+        }*/
+        ui.lr1tableWidget->setItem(i, 0, new QTableWidgetItem(str_format("S%d", i).c_str()));
+        int colnum = 1;
+        for (auto c : dfatable)
+        {
+            string s = c.second[i];
+            ui.lr1tableWidget->setItem(i, colnum, new QTableWidgetItem(s.c_str()));
+            colnum += 1;
+        }
+        /*for (int j = 0; j < dfaStat.size(); j++)
+        {
+            ui.lr0tableWidget->setItem(i, j + 1, new QTableWidgetItem(str_format("%c", lr0dfa[i][j]).c_str()));
+        }*/
+
+
+    }
+    ui.lr1tableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);    //x先自适应宽度
+    ui.lr1tableWidget->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);     //然后设置要根据内容使用宽度的列
+}
+
+
+// 函数名称: 文法分析过程表显示函数
+// 函数功能: qt界面显示文法分析过程表
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::showAnaTable()
+{
+    int cols = 3;
+    int rows = anaTable.size();
+    ui.analytableWidget->setColumnCount(cols );
+    ui.analytableWidget->setRowCount(rows);
+
+    QStringList title = QStringList();
+    title << "Stack"<<"Input"<<"Event";
+    ui.analytableWidget->setHorizontalHeaderLabels(title);
+    //cout << "以下为分析过程" << endl;
+    for (int i = 0; i < anaTable.size(); i++)
+    {
+        ui.analytableWidget->insertRow(i);//在表格中新增一行
+        for (int j = 0; j < 3; j++)
+        {
+            ui.analytableWidget->setItem(i, j, new QTableWidgetItem(anaTable[i][j].c_str()));
+        }
+
+    }
+
+
+    ui.analytableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);    //x先自适应宽度
+    ui.analytableWidget->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+}
+
+
+// 函数名称: SLR1文法分析显示函数
+// 函数功能: qt界面显示是否为SLR1分析的结果
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::showJud()
+{
+
+    QString result;
+    if (conf.empty())
+    {
+        ui.anaplainTextEdit->appendPlainText("THIS IS A SLR(1) GRAMMAR.");
+        return;
+    }
+    ui.anaplainTextEdit->appendPlainText(QString::fromStdString("Not A SLR1 GRAMMAR. \n"));
+    int i = 1;
+    while (!conf.empty())
+    {
+        conflict t = conf.top(); conf.pop();
+        string error = t.err();
+        result = QString::fromStdString(error);
+        ui.anaplainTextEdit->appendPlainText(QString("-------------------------------"));
+        QString num = QString::fromStdString(str_format("Collision %d:", i));
+        ui.anaplainTextEdit->appendPlainText(num);
+        ui.anaplainTextEdit->appendPlainText(result);
+        i += 1;
+
+    }
+
+}
+
+
+// 函数名称: 分析过程表填写函数
+// 函数功能: 填写分析过程表表项
+// 函数参数: stack<string> 分析栈; string 输入串; string 事件; char 使用的action;  t 移进用的状态
+// 函数返回值: 是否填写成功的标志
+bool SLR1::fillAnaTab(stack<string> s, string input, string event, char c, int t)
+{
+    string stack = "";
+    while (!s.empty())
+    {
+        stack += s.top();
+        s.pop();
+    }
+    string movement = "";
+    if (event[0] == 's')
+    {
+        movement = str_format("s%d uses %c [Shift] to %s", t, c, event.c_str());
+    }
+    else if (event[0] == 'r')
+    {
+        movement = str_format("s%d uses %c [Reduce](%s)", t, c, num2prod[event].c_str());
+    }
+    else if(isdigit(event[0])!=0)
+    {
+        movement = str_format("s%d uses %c [Goto] s%s", t, c, event.c_str());
+    }
+    else if(event.size()==0)
+    {
+        return false;
+    }
+    else
+    {
+        movement = str_format("s%d uses %c Accept ", t, c);
+    }
+
+    int size = anaTable.size();
+    anaTable[size][0] = stack;
+    anaTable[size][1] = input;
+    anaTable[size][2] = movement;
+    return true;
+
+}
+
+
+// 函数名称: 语法树处理函数
+// 函数功能: 将语法树输出检查, 并转化成AST
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::processTree()
+{
+    //queue<string> t = sentence[l2w["statement"]];
+    //while(!t.empty())
+    //{
+    //    string statement = w2l[t.front()[0]];
+    //    isAst[statement] = 1;
+    //    t.pop();
+    //}
+    //isAst["exp"] = 1;
+    //isAst["identifier"] = 1;
+    //isAst["number"] = 1;
+
+
+    treeNode* root = nodes[fielement[0]].top();
+    cout << "以下为语法分析树" << endl;
+    treeInfo(root, 0);
+    geneAST(root,root);
+    cout << endl << "以下为AST语法树" << endl;
+
+    asTtreeInfo(root,0);
+
+
+}
+
+
+// 函数名称: 文法规则文件打开函数
+// 函数功能: 通过浏览打开文件
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::open()
+{
+    ui.inputplainTextEdit->clear();
+    QFileDialog* f = new QFileDialog(this);
+    f->setWindowTitle("choose the data file*.txt");
+    f->setNameFilter("*.txt");
+    f->setViewMode(QFileDialog::Detail);
+
+    QString filePath;
+    if (f->exec() == QDialog::Accepted)
+        filePath = f->selectedFiles()[0];
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+    {
+        QErrorMessage* dialog = new QErrorMessage(this);
+        dialog->setWindowTitle("ERROR Message");
+        dialog->showMessage("Failed to open!");
+        return;
+    }
+    QTextStream readStream(&file);
+    while (!readStream.atEnd())
+    {
+        ui.inputplainTextEdit->appendPlainText(readStream.readLine());
+
+    }
+}
+
+
+// 函数名称: 文法规则文件保存函数
+// 函数功能: 将输入的文件进行保存的函数
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::save()
+{
+    QFileDialog dlg(this);
+
+    //获取内容的保存路径
+    //QString fileName = dlg.getSaveFileName(this, tr("Save As"), "./", tr("TXT File(*.txt)"));
+    QString fileName = QFileDialog::getSaveFileName(NULL, QStringLiteral("TXT SaveAs"), "newfile.txt", QString(tr("TXT File (*.txt)")),
+        Q_NULLPTR, QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (fileName == "")
+    {
+        return;
+    }
+
+    //内容保存到路径文件
+    QFile file(fileName);
+
+    //以文本方式打开
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        QTextStream out(&file); //IO设备对象的地址对其进行初始化
+
+        out << ui.inputplainTextEdit->toPlainText() << endl; //输出
+
+        QMessageBox::warning(this, tr("Finish"), tr("Successfully save the file!"));
+
+        file.close();
+    }
+    else
+    {
+        QMessageBox::warning(this, tr("Error"), tr("File to open file!"));
+    }
+}
+
+
+// 函数名称: 文法分析文本函数
+// 函数功能: 打开文法分析要用的lex文件或源文件
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::openText()
+{
+    ui.textplainTextEdit->clear();
+    QFileDialog* f = new QFileDialog(this);
+    f->setWindowTitle("choose your source code files or lex files");
+    f->setViewMode(QFileDialog::Detail);
+
+    QString filePath;
+    if (f->exec() == QDialog::Accepted)
+        filePath = f->selectedFiles()[0];
+
+    string srcPath = filePath.toStdString();// 保存源代码文件的绝对路径
+    QString qsrcpath = QString::fromStdString(srcPath.substr(srcPath.find_last_of('/') + 1, srcPath.size()));
+    ui.filetextEdit->setText(qsrcpath);
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+    {
+        QErrorMessage* dialog = new QErrorMessage(this);
+        dialog->setWindowTitle("ERROR Message");
+        dialog->showMessage("Failed to open!");
+        return;
+    }
+    QTextStream readStream(&file);
+    while (!readStream.atEnd())
+    {
+        ui.textplainTextEdit->appendPlainText(readStream.readLine());
+
+    }
+}
+
+
+
+// 函数名称: 单词编码可执行程序选择
+// 函数功能: 选择单词编码所用可执行程序
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::choexe()
+{
+    if (!ui.srccheckBox->isChecked())
+    {
+        messageBox("E4: Please switch to SOURCE mode!");
+        return;
+    }
+    QFileDialog* f = new QFileDialog(this);
+    f->setWindowTitle("choose the data file *.exe");
+    f->setNameFilter("*.exe");
+    f->setViewMode(QFileDialog::Detail);
+
+    QString filePath;//读取打开文件的绝对路径
+    if (f->exec() == QDialog::Accepted)
+        filePath = f->selectedFiles()[0];
+
+    string exePath = filePath.toStdString();// 保存exe文件的绝对路径
+    string exeRePath = exePath.substr(exePath.find_last_of('/') + 1, exePath.size());// 仅获取文件名(带后缀)
+    QString qexepath = QString::fromStdString(exeRePath);
+    ui.exetextEdit->setText(qexepath);
+
+    //cout << exePath << endl;
+
+    //复制一份到当前文件夹方便后续操作
+    char cwd[256];
+    _getcwd(cwd, 256);
+    string dst(cwd);
+    dst = " " + dst;
+    string src = exePath;
+    replace(src.begin(), src.end(), '/', '\\');
+    string cmd = "copy " + src + dst;
+    system(cmd.c_str());
+}
+
+
+// 函数名称: Run视图主控函数
+// 函数功能: 控制文法分析, 语法树生成
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::analyze()
+{
+    init2();
+    start(); // 后门
+    if (checkRun() == false)
+        return;
+    //1. 先将文本框中文本保存到指定的输入文件 in.txt中
+    QString fileName = QString::fromStdString("in.txt");
+
+    QFile file(fileName);
+
+    //以文本方式打开
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        QTextStream out(&file); //IO设备对象的地址对其进行初始化
+
+        out << ui.textplainTextEdit->toPlainText() << endl; //输出到in.txt中
+
+        //QMessageBox::warning(this, tr("Finish"), tr("Successfully save the file!"));
+        file.close();
+    }
+    else
+    {
+        QMessageBox::warning(this, tr("Error"), tr("File to open file!"));
+    }
+
+
+    
+    // 将两种输入模式下的文本都处理成单词编码文件 newlex.lex
+    if (ui.srccheckBox->isChecked() == true)
+    {
+        //源代码输入模式处理
+        // 检查源代码输入模式是否有指定正确的exe文件并将源代码处理成单词编码lex文件
+        string exepath = ui.exetextEdit->toPlainText().toStdString();
+        if (exepath[0] == '#')
+        {
+            messageBox("E5: Please select the path for the EXE");
+            return;
+        }
+
+        // 执行词法分析源程序组字成词并保存到newlex文件中
+        system(exepath.c_str()); 
+        string delcmd = "del " + exepath;
+        system(delcmd.c_str());
+    }
+    else
+    {
+        // lex文件输入处理
+        system("copy in.txt newlex.lex");
+    }
+
+    // 将 newlex.lex文件读取为一个长字符串
+    string input = lex2str();
+    if (input.size() == 0)
+    {
+        messageBox("E1: Null string received!");
+    }
+    //cout << input << endl;
+    if (!processStack(input))
+    {
+        messageBox("E7: The statement you entered is not grammatically correct and therefore cannot be accepted.");
+        return;
+    }
+    showAnaTable();
+    processTree();
+    showAST();
+    deleteTree();
+
+}
+
+// 函数名称: 主菜单返回函数
+// 函数功能: 返回到主菜单
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::backToMenu2()
+{
+    this->hide();
+    emit signalBackToMenu2();
+}
+
+// 函数名称: 初始化函数
+// 函数功能: 对相关变量进行初始化
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::init1()
+{
+    w2l.clear();
+    l2w.clear();
+    prod2num.clear();
+    num2prod.clear();
+    senstr = "";
+    sentence.clear();
+    while (!alnum.empty()) alnum.pop();
+    for (int i = 0; i < 26; i++)
+        alnum.push(char(int('a') + i));
+    for (int i = 0; i < 26; i++)
+        alnum.push(char(int('A') + i));
+    //for (int i = 0; i < 9; i++)
+    //    alnum.push(char(int('0') + i));
+
+    firstSet.clear();
+    followSet.clear();
+    dfatable.clear();
+    dfaStat.clear();
+    slrStat.clear();
+    fielement = "";
+    s.clear();
+    action.clear();
+    stack<conflict>().swap(conf);
+    slr1table.clear();
+    memset(lr0dfa, sizeof(lr0dfa), 0);
+    for (int i = 0; i < 200; i++)
+    {
+        for (int j = 0; j < 200; j++)
+        {
+            lr0dfa[i][j] = ' ';
+        }
+    }
+
+    ui.anaplainTextEdit->clear();
+    ui.firsttableWidget->clear();
+    ui.followtableWidget->clear();
+    ui.map1tableWidget->clear();
+    ui.map2tableWidget->clear();
+    ui.lr0tableWidget->clear();
+    ui.lr1tableWidget->clear();
+
+}
+
+// 函数名称: 初始化函数
+// 函数功能: 对相关变量进行初始化
+// 函数参数: 无
+// 函数返回值: 无
+void SLR1::init2()
+{
+    while (!idseq.empty()) idseq.pop();
+    while (!numseq.empty()) numseq.pop();
+    nodes.clear();
+    anaTable.clear();
+    isAst.clear();
+    anaTable[0][0] = "0";
+    anaTable[0][2] = "NULL";
+    int nodenum = 0;
+    ui.analytableWidget->clear();
+}
+
+
+// 函数名称: 分析树结点处理标记函数
+// 函数功能: 标记分析树转语法树过程中需要处理的结点及其处理模式
+// 函数参数: string 若干保留结点的名字构成的字符串 ; string 若干需要特殊处理的结点关系
+// 函数返回值: 无
+void SLR1::preAst(string ast, string spec)
+{
+    
+    trimAll(ast, ' ');
+    trimAll(spec, ' ');
+    string t1 = ast.substr(ast.find_first_of(':')+1, ast.size())+',';
+    string t2 = spec.substr(spec.find_first_of(':')+1, spec.size())+',';
+
+    while (t1.size()!=1)
+    {
+        int pos = t1.find(',');
+
+        string astn = t1.substr(0, pos);
+        if (astn.find('(') != string::npos && astn.find(')') != string::npos)
+        // 需要修改父子关系的建立修改模式1对1映射, 不修改的直接填 -1 
+        {
+            isAst[astn.substr(0, astn.size() - 3)] = astn[astn.size() - 2]-'0';
+        }
+        else
+        {
+            isAst[astn] = -1;
+        }
+
+        if (pos + 1 == t1.size())
+            break;
+        t1 = t1.substr(pos + 1, t1.size());
+    }
+
+    while (t2.size()!=1)
+    {
+        int pos = t2.find(',');
+        string specn = t2.substr(0, pos);
+        isAst[specn.substr(0, specn.size() - 3)] = specn[specn.size() - 2] - '0';
+        if (pos + 1 == t2.size())
+            break;
+        t2 = t2.substr(pos + 1, t2.size());
+    }
+
+    for (auto p : isAst)
+    {
+        cout << p.first << "------>" << p.second << endl;
+    }
+}
+
+// 函数名称: 单词转字符函数函数
+// 函数功能: 将单词映射到字符上的函数
+// 函数参数: string 待映射字符串
+// 函数返回值: 无
+char SLR1::word2letter(string s)
+{
+    char c = ' ';
+    if (s[0] == c) return c; // 不处理空格, 或者空格就是其本身的映射
+    if (s == "empty")
+    {
+        return '@';
+    }
+    if (l2w[s] == 0) // 处理没有出现过的单词
+    {
+        if (s.size() != 1 ) //处理单词
+        {
+            c = alnum.front();
+            alnum.pop();
+            w2l[c] = s;
+            l2w[s] = c;
+
+        }
+        else  if(s.size()==1)// 处理单一字符
+        {
+            c = s[0];
+            w2l[c] = s;
+            l2w[s] = c;
+        }
+    }
+    else //处理出现过的单词
+    {
+        c = l2w[s];
+    }
+
+    return c;
+}
+
+// 函数名称: 字符串删除指定字符函数
+// 函数功能: 删掉字符串中所有指定字符
+// 函数参数: string& 待修改字符串; char 待删除字符
+// 函数返回值: 无
+void SLR1::trimAll(string& s, char c)
+{
+    s.erase(remove(s.begin(), s.end(), c), s.end());
+}
