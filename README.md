@@ -86,9 +86,8 @@
 
 ## 注意事项
 ⚠️ **重要操作提示**：
-1. 强制推送仅用于个人分支：`git push --force-with-lease`
-2. 进行文法分析前必须先生成SLR(1)分析表（触发**E6**错误）
-3. 源代码模式需先通过词法分析器生成中间编码
+1. 进行文法分析前必须先生成SLR(1)分析表（触发**E6**错误）
+2. 源代码模式需先通过词法分析器生成中间编码
 
 📦 项目文件结构：
 ```
@@ -96,3 +95,11 @@ Genius/
 ├─ mingw-w64-gcc-10.2/    # GCC编译器组件
 ├─ Genius.sln             # Visual Studio解决方案文件
 └─ ...                    # 其他源代码文件
+
+界面样例
+![界面1](https://github.com/user-attachments/assets/4ac03458-123f-4046-8982-da95042d9a39)
+![界面2](https://github.com/user-attachments/assets/bd2fffe0-218e-4deb-a090-b020a7cdf564)
+![界面3](https://github.com/user-attachments/assets/db166b85-1c42-4ee6-a5b0-61897941a403)
+![界面4](https://github.com/user-attachments/assets/1fced7e0-159a-4e79-bb71-7f13c79fd753)
+![界面5](https://github.com/user-attachments/assets/61aaf90b-6e21-41db-a268-e3f64ba51e40)
+
